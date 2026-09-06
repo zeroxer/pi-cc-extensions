@@ -14,8 +14,6 @@ jobs:
       matrix:
         os: [ubuntu-latest, windows-latest]
     runs-on: ${{ matrix.os }}
-    env:
-      OMP_PACKAGE_DIR: ${{ runner.temp }}/omp-runtime/node_modules/@oh-my-pi/pi-coding-agent
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -35,3 +33,5 @@ jobs:
           node -e 'const fs = require("node:fs"); const path = require("node:path"); const dir = path.join(process.env.RUNNER_TEMP, "omp-runtime"); fs.mkdirSync(dir, { recursive: true }); fs.writeFileSync(path.join(dir, "package.json"), JSON.stringify({private: true, dependencies: {"@oh-my-pi/pi-coding-agent": "18.1.11"}}));'
           bun install --cwd "$RUNNER_TEMP/omp-runtime" --ignore-scripts
       - run: npm run test:omp
+        env:
+          OMP_PACKAGE_DIR: ${{ runner.temp }}/omp-runtime/node_modules/@oh-my-pi/pi-coding-agent
