@@ -375,6 +375,71 @@ test("write metadata is bounded, clearable, and failures do not retain entries",
 	assert.equal(store.get("failed"), undefined);
 });
 
+test("write metadata uses the native path resolution and shared mutation queue", async () => {
+	const directory = await mkdtemp(join(tmpdir(), "ccstyle-native-write-"));
+	const path = join(directory, "target.txt");
+	const store = new WriteExecutionMetadataStore();
+	try {
+		await writeFile(path, "original");
+		// Pi strips @ from model-supplied paths. Both spellings must enter the
+		// native queue for the same file and capture the content they replace.
+		await Promise.all([
+			executeWriteWithMetadata(
+				store,
+				"first",
+				{ path: "@target.txt", content: "first replacement" },
+				undefined,
+				directory,
+			),
+			executeWriteWithMetadata(
+				store,
+				"second",
+				{ path, content: "second replacement" },
+				undefined,
+				directory,
+			),
+		]);
+		assert.equal(store.get("first")?.previousContent, "original");
+		assert.equal(store.get("second")?.previousContent, "first replacement");
+		assert.equal(await readFile(path, "utf8"), "second replacement");
+		await assert.rejects(readFile(join(directory, "@target.txt")), { code: "ENOENT" });
+	} finally {
+		await rm(directory, { recursive: true, force: true });
+	}
+});
+
+test("hosts without Pi's write factory preserve native execution and result rendering", () => {
+	const store = new WriteExecutionMetadataStore();
+	store.set("old-call", { fileExistedBeforeWrite: false });
+	const registered: unknown[] = [];
+	const result = installWriteOverride(
+		{
+			getAllTools() {
+				return [{ name: "write", sourceInfo: { source: "builtin" } }];
+			},
+			registerTool(tool: unknown) {
+				registered.push(tool);
+			},
+		} as any,
+		store,
+		{}, // OMP exposes a session-bound WriteTool instead of this Pi factory.
+	);
+	assert.equal(result, store);
+	assert.equal(store.entries.size, 0);
+	assert.deepEqual(registered, []);
+	assert.equal(
+		renderRichToolResult(
+			"write",
+			{ content: [{ type: "text", text: "native diagnostics" }] },
+			{},
+			theme,
+			{ toolCallId: "native", args: { path: "xd://device", content: "{}" } },
+			store,
+		),
+		undefined,
+	);
+});
+
 test("write collapsed preview uses writeDiffCollapsedLines independently of edit", () => {
 	const lines = Array.from({ length: 40 }, (_, index) => `const value${index} = ${index}`).join(
 		"\n",

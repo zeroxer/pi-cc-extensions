@@ -1,7 +1,9 @@
 import { resolve } from "node:path";
+import * as codingAgent from "@earendil-works/pi-coding-agent";
 import {
 	SessionManager,
 	type ExtensionAPI,
+	type ExtensionContext,
 	type SessionInfo,
 } from "@earendil-works/pi-coding-agent";
 import {
@@ -272,10 +274,13 @@ function mergeReferences(
 ): SessionReference[] {
 	const bySessionId = new Map<string, SessionReference>();
 	for (const session of sessions) {
+		// Pi calls this field name; OMP persists and lists it as title.
+		const title = (session as SessionInfo & { title?: string }).title;
+		const info = !session.name && title ? { ...session, name: title } : session;
 		bySessionId.set(session.id, {
 			kind: "session",
 			referenceIds: [session.id],
-			info: session,
+			info,
 			path: session.path,
 		});
 	}
@@ -289,7 +294,7 @@ function mergeReferences(
 export function createAutocompleteProvider(
 	current: AutocompleteProvider,
 	getReferences: () => Promise<SessionReference[]>,
-	currentCwd: string,
+	currentCwd: string | (() => string),
 ): AutocompleteProvider {
 	return {
 		triggerCharacters: ["@"],
@@ -311,7 +316,8 @@ export function createAutocompleteProvider(
 			]);
 			if (options.signal.aborted) return null;
 
-			const sessionItems = filterSessions(references, query, currentCwd);
+			const cwd = typeof currentCwd === "function" ? currentCwd() : currentCwd;
+			const sessionItems = filterSessions(references, query, cwd);
 			const fileItems = baseSuggestions?.prefix === `@${query}` ? baseSuggestions.items : [];
 			const items = mergeSessionAndFileItems(sessionItems, fileItems, query);
 			if (items.length === 0) return baseSuggestions;
@@ -337,9 +343,42 @@ function samePath(left: string | undefined, right: string): boolean {
 		: normalizedLeft === normalizedRight;
 }
 
+type ReferenceSessionHost = {
+	loadEntriesFromFile?: (path: string) => unknown[] | Promise<unknown[]>;
+	buildSessionContext?: (entries: unknown[]) => { messages: unknown[] };
+	SessionManager: {
+		open: (
+			path: string,
+		) =>
+			| { buildSessionContext(): { messages: unknown[] }; close?: () => Promise<void> }
+			| Promise<{ buildSessionContext(): { messages: unknown[] }; close?: () => Promise<void> }>;
+	};
+};
+
+export async function loadReferenceMessages(
+	path: string,
+	host: ReferenceSessionHost = codingAgent as unknown as ReferenceSessionHost,
+): Promise<unknown[]> {
+	// OMP's open() acquires a writer. Prefer its read-only loader for references.
+	if (host.loadEntriesFromFile && host.buildSessionContext) {
+		const entries = await host.loadEntriesFromFile(path);
+		return host.buildSessionContext(
+			entries.filter((entry) => (entry as { type?: string }).type !== "session"),
+		).messages;
+	}
+	const session = await host.SessionManager.open(path);
+	try {
+		return session.buildSessionContext().messages;
+	} finally {
+		await session.close?.();
+	}
+}
+
 export default function sessionReferenceExtension(pi: ExtensionAPI): void {
 	let getAvailableReferences: (() => Promise<SessionReference[]>) | undefined;
 	let sessionGeneration = 0;
+	let autocompleteCwd = "";
+	const autocompleteUis = new WeakSet<object>();
 	const subagentIds = new Set<string>();
 	// pi-subagents emits "subagent:async-started" and "subagent:async-complete" events.
 	// We track records locally so @[SubAgent] suggestions work even without a global manager.
@@ -367,11 +406,12 @@ export default function sessionReferenceExtension(pi: ExtensionAPI): void {
 		return new Text(text, 1, 0);
 	});
 
-	pi.on("session_start", (_event, ctx) => {
+	const refreshSession = (_event: unknown, ctx: ExtensionContext) => {
 		const generation = ++sessionGeneration;
 		// 会话替换/reload 会让 ctx 的 getter 抛 stale 错误，await 之后不能再读；
 		// 这里在同步阶段一次性取出纯值。
 		const currentCwd = ctx.cwd;
+		autocompleteCwd = currentCwd;
 		const ui = ctx.ui;
 		subagentIds.clear();
 		clearLiveSubagentRecords();
@@ -424,7 +464,7 @@ export default function sessionReferenceExtension(pi: ExtensionAPI): void {
 		};
 
 		getAvailableReferences = getReferences;
-		if (ctx.mode === "tui") {
+		if (ctx.mode === "tui" || (ctx.mode === undefined && ctx.hasUI)) {
 			// 预取是 detached 的，必须兜住 rejection，否则 stale 错误会变成
 			// unhandled rejection 直接终止 Pi。
 			void getReferences().catch(() => {});
@@ -432,12 +472,24 @@ export default function sessionReferenceExtension(pi: ExtensionAPI): void {
 			// prefix, so a provider installed before it would never see session mentions.
 			setTimeout(() => {
 				if (generation !== sessionGeneration) return;
+				if (autocompleteUis.has(ui)) return;
 				ui.addAutocompleteProvider((current) =>
-					createAutocompleteProvider(current, getReferences, currentCwd),
+					createAutocompleteProvider(
+						current,
+						() => getAvailableReferences?.() ?? Promise.resolve([]),
+						() => autocompleteCwd,
+					),
 				);
+				autocompleteUis.add(ui);
 			}, 0);
 		}
-	});
+	};
+	pi.on("session_start", refreshSession);
+	(pi.on as (event: string, handler: typeof refreshSession) => void)(
+		"session_switch",
+		refreshSession,
+	);
+	pi.on("session_tree", refreshSession);
 
 	pi.on("before_agent_start", async (event, ctx) => {
 		const referenceIds = extractSessionReferenceIds(event.prompt);
@@ -496,7 +548,7 @@ export default function sessionReferenceExtension(pi: ExtensionAPI): void {
 				const messages =
 					reference.messages ??
 					(reference.path
-						? SessionManager.open(reference.path).buildSessionContext().messages
+						? await loadReferenceMessages(reference.path)
 						: (() => {
 								throw new Error("reference session is no longer available");
 							})());
@@ -526,12 +578,6 @@ export default function sessionReferenceExtension(pi: ExtensionAPI): void {
 				details,
 			},
 		};
-	});
-
-	pi.on("session_before_switch", () => {
-		subagentIds.clear();
-		clearLiveSubagentRecords();
-		getAvailableReferences = undefined;
 	});
 
 	pi.on("session_shutdown", () => {

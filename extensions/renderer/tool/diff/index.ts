@@ -1,4 +1,5 @@
-import { createWriteToolDefinition, type ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import * as PiAgent from "@earendil-works/pi-coding-agent";
+import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { truncateToWidth } from "@earendil-works/pi-tui";
 import {
 	renderEditDiffResult,
@@ -6,7 +7,11 @@ import {
 	type DisplayConfigInput,
 } from "./diff-renderer.ts";
 import { DEFAULT_TOOL_DISPLAY_CONFIG } from "../../../config/config.ts";
-import { executeWriteWithMetadata, WriteExecutionMetadataStore } from "./write-execution.ts";
+import {
+	executeWriteWithMetadata,
+	WriteExecutionMetadataStore,
+	type NativeWriteToolFactory,
+} from "./write-execution.ts";
 
 function resultText(result: any): string {
 	const blocks = Array.isArray(result?.content) ? result.content : [];
@@ -59,6 +64,7 @@ export function renderRichToolResult(
 		);
 	}
 	if (toolName !== "write") return undefined;
+	if (writeMetadata.useNativeRenderer) return undefined;
 
 	const metadata = writeMetadata.get(context?.toolCallId);
 	if (!metadata) {
@@ -98,19 +104,38 @@ function hasExternalWriteOwner(pi: ExtensionAPI): boolean {
 export function installWriteOverride(
 	pi: ExtensionAPI,
 	store = new WriteExecutionMetadataStore(),
+	host: { createWriteToolDefinition?: NativeWriteToolFactory } = PiAgent,
 ): WriteExecutionMetadataStore {
+	const createNativeWrite = host.createWriteToolDefinition;
+	if (typeof createNativeWrite !== "function") {
+		// OMP's session-bound writer owns approvals, hashline snapshots, LSP, and
+		// virtual/remote paths. Replacing it with filesystem writes loses behavior.
+		store.useNativeRenderer = true;
+		store.clear();
+		return store;
+	}
 	if (typeof (pi as any).registerTool !== "function" || hasExternalWriteOwner(pi)) return store;
-	const nativeWrite = createWriteToolDefinition(process.cwd()) as any;
+	const nativeWrite = createNativeWrite(process.cwd());
+	store.useNativeRenderer = false;
 	pi.registerTool({
 		...nativeWrite,
 		async execute(
 			toolCallId: string,
 			params: { path: string; content: string },
 			signal: AbortSignal | undefined,
-			_onUpdate: unknown,
-			ctx: { cwd: string },
+			onUpdate: Parameters<typeof nativeWrite.execute>[3],
+			ctx: Parameters<ReturnType<NativeWriteToolFactory>["execute"]>[4],
 		) {
-			return executeWriteWithMetadata(store, toolCallId, params, signal, ctx.cwd);
+			return executeWriteWithMetadata(
+				store,
+				toolCallId,
+				params,
+				signal,
+				ctx.cwd,
+				createNativeWrite,
+				onUpdate,
+				ctx,
+			);
 		},
 	});
 	return store;

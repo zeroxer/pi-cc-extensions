@@ -5,7 +5,13 @@
  * CcstylePanelHooks 注入，避免 config → renderer 循环依赖。
  */
 import { getSettingsListTheme } from "@earendil-works/pi-coding-agent";
-import { Input, SettingsList, matchesKey, truncateToWidth } from "@earendil-works/pi-tui";
+import {
+	Input,
+	SettingsList,
+	matchesKey,
+	truncateToWidth,
+	wrapTextWithAnsi,
+} from "@earendil-works/pi-tui";
 import type { CompactThinkingController } from "../feature/compact-thinking.ts";
 import { applyStartupHeader } from "../feature/shell/startup-header.ts";
 import type { ToolGroupingHooks } from "../renderer/tool/grouping.ts";
@@ -41,6 +47,27 @@ export type CcstylePanelHooks = {
 	applyStyleMode: (mode: CompactStyleMode, ctx: any, toolGrouping?: ToolGroupingHooks) => void;
 	refreshCurrentTranscript: (ctx?: any, toolGrouping?: ToolGroupingHooks) => void;
 };
+
+export type CcstylePanelOptions = {
+	host?: "pi" | "omp";
+	toolNames?: readonly string[];
+};
+
+function panelModeDescription(mode: CompactStyleMode, options: CcstylePanelOptions): string {
+	if (options.host !== "omp") return modeSettingDescription(mode);
+	if (mode === "compact")
+		return "One line per tool card and thinking block. OMP keeps its read groups and task cards.";
+	if (mode === "off")
+		return "OMP native tool and thinking rendering. Markdown enhancements remain enabled.";
+	return "Concise tool cards and thinking previews. Expanded tools use OMP's native view.";
+}
+
+function panelExcludeDescription(names: readonly string[], options: CcstylePanelOptions): string {
+	if (options.host !== "omp") return excludeRenderersDescription(names);
+	return names.length
+		? `Use OMP's native rendering for: ${names.join(", ")}. Enter to change.`
+		: "Choose tools that should use OMP's native rendering.";
+}
 
 function modeSettingDescription(mode: CompactStyleMode): string {
 	if (mode === "compact") {
@@ -97,13 +124,14 @@ function featureToggleSetting(
 function buildExcludeRenderersSubmenu(
 	onClose: () => void,
 	onLiveChange: () => void,
+	options: CcstylePanelOptions,
 ): {
 	render: (width: number) => string[];
 	invalidate: () => void;
 	handleInput: (data: string) => void;
 } {
 	const candidates = [
-		...new Set([...EXCLUDE_RENDERER_CANDIDATES, ...config.excludeRenderers]),
+		...new Set(options.toolNames ?? [...EXCLUDE_RENDERER_CANDIDATES, ...config.excludeRenderers]),
 	].sort((a, b) => a.localeCompare(b));
 	const items = candidates.map((name) => ({
 		id: name,
@@ -111,7 +139,7 @@ function buildExcludeRenderersSubmenu(
 		description:
 			name === "Agent"
 				? "Agent always uses its dedicated renderer and cannot be forced through ccstyle."
-				: `Use Pi native renderer for ${name} instead of Claude Code styling.`,
+				: `Use ${options.host === "omp" ? "OMP" : "Pi"} native renderer for ${name} instead of Claude Code styling.`,
 		currentValue: config.excludeRenderers.includes(name) ? "exclude" : "style",
 		values: ["style", "exclude"],
 	}));
@@ -227,8 +255,13 @@ export async function showCcstylePanel(
 	hooks: CcstylePanelHooks,
 	toolGrouping?: ToolGroupingHooks,
 	compactThinking?: CompactThinkingController,
+	options: CcstylePanelOptions = {},
 ): Promise<void> {
-	if (ctx?.mode !== "tui" || !ctx?.hasUI || typeof ctx.ui?.custom !== "function") {
+	if (
+		(ctx?.mode !== "tui" && ctx?.mode !== undefined) ||
+		!ctx?.hasUI ||
+		typeof ctx.ui?.custom !== "function"
+	) {
 		ctx.ui?.notify?.("/ccstyle requires TUI mode", "warning");
 		return;
 	}
@@ -237,7 +270,7 @@ export async function showCcstylePanel(
 		const modeSetting = {
 			id: "mode",
 			label: "Mode",
-			description: modeSettingDescription(config.mode),
+			description: panelModeDescription(config.mode, options),
 			currentValue: config.mode === "compact" ? "compact (Experimental)" : config.mode,
 			values: ["on", "compact (Experimental)", "off"],
 		};
@@ -247,7 +280,7 @@ export async function showCcstylePanel(
 		const excludeSetting = {
 			id: "excludeRenderers",
 			label: "Exclude tools",
-			description: excludeRenderersDescription(config.excludeRenderers),
+			description: panelExcludeDescription(config.excludeRenderers, options),
 			currentValue: formatExcludeRenderers(config.excludeRenderers),
 			submenu: (_current: string, closeSubmenu: (selected?: string) => void) => {
 				excludeSubmenuOpen = true;
@@ -255,14 +288,15 @@ export async function showCcstylePanel(
 					() => {
 						excludeSubmenuOpen = false;
 						excludeSetting.currentValue = formatExcludeRenderers(config.excludeRenderers);
-						excludeSetting.description = excludeRenderersDescription(config.excludeRenderers);
+						excludeSetting.description = panelExcludeDescription(config.excludeRenderers, options);
 						closeSubmenu();
 					},
 					() => {
 						excludeSetting.currentValue = formatExcludeRenderers(config.excludeRenderers);
-						excludeSetting.description = excludeRenderersDescription(config.excludeRenderers);
+						excludeSetting.description = panelExcludeDescription(config.excludeRenderers, options);
 						hooks.refreshCurrentTranscript(ctx);
 					},
+					options,
 				);
 			},
 		};
@@ -484,13 +518,13 @@ export async function showCcstylePanel(
 					// 选项值带 Experimental 标记，选择后还原为真实 mode 值。
 					const mode: CompactStyleMode =
 						value === "compact (Experimental)" ? "compact" : (value as CompactStyleMode);
-					modeSetting.description = modeSettingDescription(mode);
+					modeSetting.description = panelModeDescription(mode, options);
 					hooks.applyStyleMode(mode, ctx, toolGrouping);
 					return;
 				}
 				case "excludeRenderers":
 					excludeSetting.currentValue = formatExcludeRenderers(config.excludeRenderers);
-					excludeSetting.description = excludeRenderersDescription(config.excludeRenderers);
+					excludeSetting.description = panelExcludeDescription(config.excludeRenderers, options);
 					return;
 				case "diffViewMode":
 					updateConfig({ diffViewMode: value as DiffViewMode });
@@ -608,7 +642,7 @@ export async function showCcstylePanel(
 			ctx.ui.notify(`Updated ${id}: ${value}`, "info");
 		};
 
-		const sections: CcstyleSection[] = [
+		let sections: CcstyleSection[] = [
 			{
 				id: "style",
 				label: "Style",
@@ -661,6 +695,22 @@ export async function showCcstylePanel(
 				],
 			},
 		];
+		if (options.host === "omp") {
+			inputClipSetting.description =
+				"Max characters for paths and commands in tool summaries. Enter to type a custom value.";
+			thinkingPreviewSetting.description =
+				"Thinking preview body lines in on mode; 0 hides the body.";
+			sections = [
+				{
+					id: "style",
+					label: "Style",
+					items: [modeSetting, ...(options.toolNames?.length === 0 ? [] : [excludeSetting])],
+				},
+				{ id: "thinking", label: "Thinking", items: [thinkingPreviewSetting, thinkingDimSetting] },
+				{ id: "ui", label: "UI", items: [inputClipSetting, startupHeaderSetting] },
+				sections.find((section) => section.id === "feature")!,
+			];
+		}
 
 		let activeSection = 0;
 		const settingsTheme = getSettingsListTheme();
@@ -686,6 +736,8 @@ export async function showCcstylePanel(
 		/** 数值项：当前选中项有 submenu + values 时，Space 仅循环预设，不打开子面板。 */
 		const cyclePresetInList = (list: InstanceType<typeof SettingsList>): boolean => {
 			const internal = list as unknown as {
+				getSelectedItem?: () => any;
+				hasOpenSubmenu?: () => boolean;
 				submenuComponent: unknown;
 				items: {
 					id: string;
@@ -695,8 +747,8 @@ export async function showCcstylePanel(
 				}[];
 				selectedIndex: number;
 			};
-			if (internal.submenuComponent) return false;
-			const item = internal.items[internal.selectedIndex];
+			if (internal.hasOpenSubmenu?.() || internal.submenuComponent) return false;
+			const item = internal.getSelectedItem?.() ?? internal.items?.[internal.selectedIndex];
 			if (!item?.submenu || !item.values?.length) return false;
 			const i = item.values.indexOf(item.currentValue);
 			item.currentValue = item.values[i === -1 ? 0 : (i + 1) % item.values.length]!;
@@ -725,6 +777,15 @@ export async function showCcstylePanel(
 					renderSectionTabBar(theme, sections, activeSection, safeWidth),
 					rule,
 					...listBody,
+					...(options.host === "omp"
+						? wrapTextWithAnsi(
+								theme.fg(
+									"dim",
+									"OMP controls diffs, read groups, task cards, expanded output and mouse input. Themes: /ccstyle themes, then /theme.",
+								),
+								safeWidth,
+							)
+						: []),
 					rule,
 					truncateToWidth(
 						theme.fg(

@@ -1,6 +1,6 @@
 import type { CompactThinkingConfig } from "../feature/compact-thinking.ts";
-import { existsSync, readFileSync, writeFileSync } from "node:fs";
-import { homedir } from "node:os";
+import { getAgentDir } from "@earendil-works/pi-coding-agent";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
 export type CompactStyleMode = "on" | "compact" | "off";
@@ -66,7 +66,7 @@ export type Config = {
 	enableAliases: boolean;
 };
 
-const AGENT_DIR = process.env.PI_CODING_AGENT_DIR ?? join(homedir(), ".pi", "agent");
+export const AGENT_DIR = getAgentDir();
 const CONFIG_PATH = join(AGENT_DIR, "claude-code-style.json");
 
 export const DIFF_VIEW_MODES: DiffViewMode[] = ["auto", "split", "unified"];
@@ -295,6 +295,7 @@ function loadConfig(): Config {
 }
 
 export function saveConfig() {
+	mkdirSync(AGENT_DIR, { recursive: true });
 	writeFileSync(CONFIG_PATH, JSON.stringify(config, null, 2));
 }
 

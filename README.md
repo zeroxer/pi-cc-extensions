@@ -22,7 +22,31 @@
 
 https://github.com/user-attachments/assets/6c858000-fdad-43f9-957f-4d0278648498
 
-## 快速开始
+## OMP 兼容版
+
+本 fork 基于 [minuque/pi-cc-extensions](https://github.com/minuque/pi-cc-extensions)，同时支持 Pi 和 Oh My Pi。OMP 适配以 **18.1.11** 为验证版本。
+
+```bash
+omp install git:github.com/zeroxer/pi-cc-extensions
+```
+
+安装后重启 OMP，或在会话里执行 `/reload`，使用 `/ccstyle` 打开设置。这个 GitHub fork 包含兼容修复；`npm:pi-cc-extensions` 仍指向上游 npm 包。
+
+OMP 使用独立的界面适配层：`on` 显示简洁工具摘要，`compact` 将工具卡压缩为单行，`off` 恢复原生渲染。通过 OMP 原生展开操作查看完整输出。编辑/写入差异、任务卡片、读取分组及鼠标交互由 OMP 管理；不会替换 OMP 的写文件工具。Pi 的工具分组和全屏鼠标补丁不会在 OMP 中安装。
+
+上下文面板、已保存的会话引用、思考预览、启动页和工作状态支持 OMP。OMP 的实时 task 子代理引用尚未接入；下方实时子代理功能说明针对 Pi。OMP 的 Memory 计入 System prompt，面板直接预览实际系统提示；最近一轮工具摘要通过 widget 展示，不写入模型上下文。配置位于宿主的 agent 目录（OMP 默认 `~/.omp/agent/claude-code-style.json`，也支持 `PI_CODING_AGENT_DIR`）。OMP 使用 `/ccstyle themes` 安装兼容格式的 CC Dark / CC Light 主题，再在 `/settings` 中选择。已有主题文件会保留；Pi 继续自动发现随包主题。
+
+本地验证：
+
+```bash
+npm ci --ignore-scripts
+npm run typecheck
+npm test
+# 使用 Bun 和已安装的 OMP 包目录，不发送模型请求
+npm run test:omp -- /path/to/node_modules/@oh-my-pi/pi-coding-agent
+```
+
+## Pi 快速开始
 
 ```bash
 pi install npm:pi-cc-extensions
@@ -33,7 +57,7 @@ pi install git:github.com/minuque/pi-cc-extensions
 
 安装后执行 `/reload`
 
-## 功能
+## Pi 功能
 
 | 功能                  | 说明                                                                            | 入口                                            |
 | --------------------- | ------------------------------------------------------------------------------- | ----------------------------------------------- |
@@ -43,11 +67,11 @@ pi install git:github.com/minuque/pi-cc-extensions
 | 配置面板              | `Style / Diff / Thinking / UI / Feature` 五页签                                 | `/ccstyle`                                      |
 | 上下文检查            | 查看上下文占用，并预览 System prompt、Memory、Skills、Tools definition 和消息内容 | `/context`                                      |
 | Session/Subagent 引用 | 搜索并注入历史 Session 或现有 SubAgent 的有效上下文                             | `@`                                             |
-| 主题                  | 随包提供内置 CC Dark、CC Light 主题                                             | `/theme`                                        |
+| 主题                  | 随包提供内置 CC Dark、CC Light 主题                                             | Pi: `/theme`；OMP: `/ccstyle themes` 后 `/settings` |
 
 ## 配置
 
-`/ccstyle` 的行为由 `~/.pi/agent/claude-code-style.json` 配置：
+`/ccstyle` 的配置保存在宿主 agent 目录：Pi 为 `~/.pi/agent/claude-code-style.json`，OMP 通常为 `~/.omp/agent/claude-code-style.json`。以下为 Pi 的完整配置；OMP 面板仅提供适用选项：
 
 ```js
 {

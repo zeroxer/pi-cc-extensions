@@ -1,6 +1,9 @@
-import { withFileMutationQueue } from "@earendil-works/pi-coding-agent";
+import * as PiAgent from "@earendil-works/pi-coding-agent";
 import { lstat, mkdir, readFile, writeFile } from "node:fs/promises";
-import { dirname, isAbsolute, resolve } from "node:path";
+
+export type NativeWriteToolFactory = typeof PiAgent.createWriteToolDefinition;
+type NativeWriteArguments = Parameters<ReturnType<NativeWriteToolFactory>["execute"]>;
+type NativeWriteResult = Awaited<ReturnType<ReturnType<NativeWriteToolFactory>["execute"]>>;
 
 export const MAX_COMPARABLE_WRITE_BYTES = 512_000;
 export const MAX_WRITE_METADATA_ENTRIES = 100;
@@ -13,6 +16,8 @@ export type WriteExecutionMeta = {
 
 export class WriteExecutionMetadataStore {
 	readonly entries = new Map<string, WriteExecutionMeta>();
+	/** Hosts without Pi's write factory retain their native execution and renderer. */
+	useNativeRenderer = false;
 
 	set(toolCallId: string, metadata: WriteExecutionMeta): void {
 		this.entries.delete(toolCallId);
@@ -80,32 +85,39 @@ export async function executeWriteWithMetadata(
 	params: { path: string; content: string },
 	signal: AbortSignal | undefined,
 	cwd: string,
-): Promise<{ content: Array<{ type: "text"; text: string }>; details: undefined }> {
-	const absolutePath = isAbsolute(params.path) ? params.path : resolve(cwd, params.path);
+	createNativeWrite: NativeWriteToolFactory | undefined = PiAgent.createWriteToolDefinition,
+	onUpdate?: NativeWriteArguments[3],
+	ctx?: NativeWriteArguments[4],
+): Promise<NativeWriteResult> {
 	store.delete(toolCallId);
 	try {
-		return await withFileMutationQueue(absolutePath, async () => {
-			const throwIfAborted = () => {
-				if (signal?.aborted) throw new Error("Operation aborted");
-			};
-			throwIfAborted();
-			const metadata = await capturePreviousContent(absolutePath);
-			throwIfAborted();
-			await mkdir(dirname(absolutePath), { recursive: true });
-			throwIfAborted();
-			await writeFile(absolutePath, params.content, "utf8");
-			throwIfAborted();
-			store.set(toolCallId, metadata);
-			return {
-				content: [
-					{
-						type: "text",
-						text: `Successfully wrote ${params.content.length} bytes to ${params.path}`,
-					},
-				],
-				details: undefined,
-			};
+		if (typeof createNativeWrite !== "function") {
+			throw new Error("This host does not expose Pi's native write tool factory");
+		}
+		let metadata: WriteExecutionMeta | undefined;
+		const nativeWrite = createNativeWrite(cwd, {
+			operations: {
+				mkdir: async (directory) => {
+					await mkdir(directory, { recursive: true });
+				},
+				async writeFile(absolutePath, content) {
+					// The native tool resolves the path and owns its mutation queue. Capture
+					// inside that queue, immediately before writing, without nesting locks.
+					metadata = await capturePreviousContent(absolutePath);
+					if (signal?.aborted) throw new Error("Operation aborted");
+					await writeFile(absolutePath, content, "utf8");
+				},
+			},
 		});
+		const result = await nativeWrite.execute(
+			toolCallId,
+			params,
+			signal,
+			onUpdate,
+			ctx ?? ({ cwd } as NativeWriteArguments[4]),
+		);
+		if (metadata) store.set(toolCallId, metadata);
+		return result;
 	} catch (error) {
 		store.delete(toolCallId);
 		throw error;

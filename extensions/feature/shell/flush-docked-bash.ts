@@ -21,6 +21,12 @@ export function installFlushDockedBash(): void {
 		previous && prototype.handleBashCommand === previous.installed
 			? previous.original
 			: prototype.handleBashCommand;
+	if (
+		typeof original !== "function" ||
+		typeof prototype.flushPendingBashComponents !== "function"
+	) {
+		return;
+	}
 	const patch: Patch = {
 		active: true,
 		prototype,

@@ -1,0 +1,37 @@
+name: Pi and OMP compatibility
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  compatibility:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    env:
+      OMP_PACKAGE_DIR: ${{ runner.temp }}/omp-runtime/node_modules/@oh-my-pi/pi-coding-agent
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.14
+      - run: npm ci --ignore-scripts
+      - run: npm run lint
+      - run: npm run typecheck
+      - run: npm test
+      - name: Prepare isolated OMP installation
+        shell: bash
+        run: |
+          node -e 'const fs = require("node:fs"); const path = require("node:path"); const dir = path.join(process.env.RUNNER_TEMP, "omp-runtime"); fs.mkdirSync(dir, { recursive: true }); fs.writeFileSync(path.join(dir, "package.json"), JSON.stringify({private: true, dependencies: {"@oh-my-pi/pi-coding-agent": "18.1.11"}}));'
+          bun install --cwd "$RUNNER_TEMP/omp-runtime" --ignore-scripts
+      - run: npm run test:omp

@@ -19,6 +19,7 @@ import {
 } from "@earendil-works/pi-tui";
 import { Box, Markdown, Spacer, Text, type Component } from "@earendil-works/pi-tui";
 import { isToolTuiFullscreen } from "../renderer/tool/show-more-hint.ts";
+import { installOmpThinking, usesOmpComponents } from "../renderer/omp.ts";
 import {
 	animateCompactThinkingText,
 	formatThoughtDuration,
@@ -1049,6 +1050,10 @@ export function installCompactThinking(
 	pi: ExtensionAPI,
 	initialConfig: CompactThinkingConfig,
 ): CompactThinkingController {
+	if (usesOmpComponents()) {
+		Object.assign(config, initialConfig);
+		return installOmpThinking(pi, initialConfig, (next) => Object.assign(config, next));
+	}
 	const owner = {};
 	let session: { event: any; ctx: any } | undefined;
 	let active = false;

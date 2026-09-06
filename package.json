@@ -1,6 +1,6 @@
 {
 	"name": "pi-cc-extensions",
-	"version": "0.8.69",
+	"version": "0.8.69-omp.1",
 	"license": "MIT",
 	"description": "A Pi productivity suite with Claude Code-style UI, context inspection, and agent/session references",
 	"type": "module",
@@ -10,13 +10,13 @@
 		"pi-coding-agent",
 		"claude-code"
 	],
-	"homepage": "https://github.com/minuque/pi-cc-extensions#readme",
+	"homepage": "https://github.com/zeroxer/pi-cc-extensions#readme",
 	"repository": {
 		"type": "git",
-		"url": "git+https://github.com/minuque/pi-cc-extensions.git"
+		"url": "git+https://github.com/zeroxer/pi-cc-extensions.git"
 	},
 	"bugs": {
-		"url": "https://github.com/minuque/pi-cc-extensions/issues"
+		"url": "https://github.com/zeroxer/pi-cc-extensions/issues"
 	},
 	"files": [
 		"extensions",
@@ -37,8 +37,14 @@
 		"image": "https://raw.githubusercontent.com/minuque/pi-cc-extensions/main/assets/readme/preview.png",
 		"video": "https://github.com/user-attachments/assets/6c858000-fdad-43f9-957f-4d0278648498"
 	},
+	"omp": {
+		"extensions": [
+			"./extensions/index.ts"
+		]
+	},
 	"scripts": {
 		"test": "node --test tests/**/*.test.ts",
+		"test:omp": "bun scripts/test-omp.ts",
 		"typecheck": "tsc --noEmit",
 		"format": "biome format --write .",
 		"format:check": "biome format .",

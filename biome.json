@@ -10,6 +10,7 @@
 			"extensions/**/*.ts",
 			"tests/**/*.ts",
 			"scripts/**/*.mjs",
+			"scripts/test-omp.ts",
 			"package.json",
 			"themes/**/*.json"
 		]

@@ -8,7 +8,7 @@
  * 呈现：`summaryLine` 纯文本，`summaryMarkdown` Markdown（可 box 引用块）。
  */
 
-import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { formatDuration } from "../../utils/format.ts";
 
 /** 工具分类。 */
@@ -142,19 +142,25 @@ export function summaryMarkdown(
  */
 export function bindAgentSummary(
 	pi: ExtensionAPI,
-	onSummary: (data: AgentSummaryData) => void,
+	onSummary: (data: AgentSummaryData, ctx?: ExtensionContext) => void,
 ): void {
 	let summary = new AgentRunSummary();
-	pi.on("agent_start", async () => {
+	const resetSummary = () => {
 		summary = new AgentRunSummary();
-	});
+	};
+	pi.on("agent_start", resetSummary);
+	pi.on("session_start", resetSummary);
+	// OMP emits this event without re-running session_start; Pi does not declare it.
+	(pi.on as (event: string, handler: () => void) => void)("session_switch", resetSummary);
+	pi.on("session_tree", resetSummary);
+	pi.on("session_shutdown", resetSummary);
 	pi.on("tool_execution_start", async (event) => {
 		summary.recordToolStart(event.toolName, event.args);
 	});
 	pi.on("tool_execution_end", async (event) => {
 		summary.recordToolResult(event.isError === true);
 	});
-	pi.on("agent_end", async () => {
-		if (summary.toolCount >= 2) onSummary(summary.snapshot());
+	pi.on("agent_end", async (_event, ctx) => {
+		if (summary.toolCount >= 2) onSummary(summary.snapshot(), ctx);
 	});
 }

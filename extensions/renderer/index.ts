@@ -1,4 +1,5 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import { installOmpRendering, usesOmpComponents } from "./omp.ts";
 import type { CompactThinkingController } from "../feature/compact-thinking.ts";
 import { installToolGrouping, type ToolGroupingHooks } from "./tool/grouping.ts";
 import {
@@ -99,6 +100,10 @@ export default function (
 ) {
 	// 可选 override：集成测试不依赖用户全局配置。
 	if (configOverride) setConfig(normalizeConfig({ ...config, ...configOverride }));
+	if (usesOmpComponents()) {
+		installOmpRendering(pi, compactThinking);
+		return;
+	}
 	const writeExecutionMetadata = new WriteExecutionMetadataStore();
 	const mouseOwner = {};
 	let installation:

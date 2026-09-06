@@ -22,7 +22,31 @@
 
 https://github.com/user-attachments/assets/6c858000-fdad-43f9-957f-4d0278648498
 
-## Quick start
+## OMP-compatible fork
+
+This fork of [minuque/pi-cc-extensions](https://github.com/minuque/pi-cc-extensions) supports both Pi and Oh My Pi. The OMP integration is verified against **18.1.11**.
+
+```bash
+omp install git:github.com/zeroxer/pi-cc-extensions
+```
+
+Restart OMP or run `/reload`, then open `/ccstyle`. Install this GitHub fork to get these fixes; `npm:pi-cc-extensions` still resolves to the upstream npm release.
+
+OMP uses a separate renderer: `on` shows concise tool summaries, `compact` uses single-line tool cards, and `off` restores native rendering. Use OMP's native expansion to see full output. Edit/write diffs, task cards, read grouping, and mouse interaction stay native. OMP's writer is never replaced. Pi's transcript grouping and fullscreen mouse patches are not installed in OMP.
+
+Context inspection, saved session references, thinking previews, the header, and working status support OMP. Native live OMP task references are not integrated; the live subagent features below apply to Pi. Memory remains part of System prompt because OMP exposes the effective prompt rather than Pi's prompt-building options. The latest turn's tool summary uses a widget without adding model context. Configuration uses the host agent directory (normally `~/.omp/agent/claude-code-style.json` in OMP, honoring `PI_CODING_AGENT_DIR`). In OMP, run `/ccstyle themes` to install compatible CC Dark / CC Light themes, then select one in `/settings`. Existing theme files are preserved. Pi continues to discover its bundled themes automatically.
+
+Local verification:
+
+```bash
+npm ci --ignore-scripts
+npm run typecheck
+npm test
+# Requires Bun and the installed OMP package directory; makes no model request
+npm run test:omp -- /path/to/node_modules/@oh-my-pi/pi-coding-agent
+```
+
+## Pi quick start
 
 ```bash
 pi install npm:pi-cc-extensions
@@ -33,7 +57,7 @@ pi install git:github.com/minuque/pi-cc-extensions
 
 Run `/reload` after installation.
 
-## Features
+## Pi features
 
 | Feature                     | Description                                                                               | Entry point                                     |
 | --------------------------- | ----------------------------------------------------------------------------------------- | ----------------------------------------------- |
@@ -43,11 +67,11 @@ Run `/reload` after installation.
 | Settings panel              | `Style / Diff / Thinking / UI / Feature` tabs                                             | `/ccstyle`                                      |
 | Context inspection          | Usage breakdown and previews for the system prompt, memory, skills, tools definition, and messages | `/context`                                      |
 | Session/Subagent references | Search and inject effective context from previous Sessions or existing SubAgents          | `@`                                             |
-| Theme                       | Bundled CC Dark and CC Light themes                                                       | `/theme`                                        |
+| Theme                       | Bundled CC Dark and CC Light themes                                                       | Pi: `/theme`; OMP: `/ccstyle themes`, then `/settings` |
 
 ## Configuration
 
-`/ccstyle` behavior is configured through `~/.pi/agent/claude-code-style.json`:
+`/ccstyle` uses the host agent directory: `~/.pi/agent/claude-code-style.json` in Pi, normally `~/.omp/agent/claude-code-style.json` in OMP. The full Pi configuration follows; OMP shows only applicable controls:
 
 ```js
 {

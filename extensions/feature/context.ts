@@ -4,9 +4,9 @@ import {
 	type ExtensionCommandContext,
 	type ToolInfo,
 	estimateTokens,
-	formatSkillsForPrompt,
 	getMarkdownTheme,
 } from "@earendil-works/pi-coding-agent";
+import * as codingAgent from "@earendil-works/pi-coding-agent";
 import { Key, Markdown, matchesKey, visibleWidth } from "@earendil-works/pi-tui";
 import { mouseBaseButton, parseSgrMousePacket } from "../utils/sgr-mouse.ts";
 import { padLine } from "../utils/format.ts";
@@ -342,14 +342,48 @@ function previewValue(value: unknown): string {
 	return `\`\`\`json\n${JSON.stringify(value, null, 2)}\n\`\`\``;
 }
 
+/** OMP renders skills inside its prompt template and does not export Pi's formatter. */
+export function skillsPreview(
+	systemPrompt: string,
+	skills: NonNullable<BuildSystemPromptOptions["skills"]>,
+	formatter: typeof codingAgent.formatSkillsForPrompt | null | undefined = (
+		codingAgent as Partial<typeof codingAgent>
+	).formatSkillsForPrompt,
+): string {
+	if (formatter) return formatter(skills).trim();
+	// Use the actual rendered blocks, including custom OMP prompt templates.
+	return [...systemPrompt.matchAll(/<skills>[\s\S]*?<\/skills>/g)]
+		.map((match) => match[0])
+		.join("\n\n");
+}
+
+function contextEntries(manager: ExtensionCommandContext["sessionManager"]): any[] {
+	if (typeof manager.buildContextEntries === "function") return manager.buildContextEntries();
+	const portable = manager as unknown as {
+		buildSessionContext?: () => { messages: unknown[] };
+		getBranch: () => unknown[];
+	};
+	const build = (
+		codingAgent as unknown as {
+			buildSessionContext?: (entries: unknown[]) => { messages: unknown[] };
+		}
+	).buildSessionContext;
+	const context = portable.buildSessionContext?.() ?? build?.(portable.getBranch());
+	return context?.messages.map((message) => ({ type: "message", message })) ?? [];
+}
+
 /** 按真实请求的 systemPrompt、tools、messages 三部分同步组装计数与预览。 */
 export function collectContextBreakdown(
 	ctx: ExtensionCommandContext,
 	allTools: ToolInfo[],
+	activeTools?: string[],
 ): ContextBreakdown {
 	const options = (ctx.getSystemPromptOptions?.() ?? {}) as BuildSystemPromptOptions;
-	const systemPrompt = typeof ctx.getSystemPrompt === "function" ? ctx.getSystemPrompt() : "";
-	const selectedTools = new Set(options.selectedTools ?? ["read", "bash", "edit", "write"]);
+	const prompt = typeof ctx.getSystemPrompt === "function" ? ctx.getSystemPrompt() : "";
+	const systemPrompt = Array.isArray(prompt) ? prompt.join("\n\n") : prompt;
+	const selectedTools = new Set(
+		activeTools ?? options.selectedTools ?? allTools.map((tool) => tool.name),
+	);
 	const toolDefinitionPreview: string[] = [];
 	const toolResultPreview: string[] = [];
 	const contextPreview: string[] = [];
@@ -364,7 +398,11 @@ export function collectContextBreakdown(
 		memoryPreview.push(`## ${file.path}\n\n${previewValue(file.content)}`);
 	}
 
-	const skillsText = formatSkillsForPrompt(options.skills ?? []).trim();
+	const skillsText = skillsPreview(
+		systemPrompt,
+		options.skills ?? [],
+		Array.isArray(prompt) ? null : undefined,
+	);
 	const skillsTokens = embeddedTokens(systemPrompt, skillsText);
 
 	for (const tool of allTools) {
@@ -378,7 +416,7 @@ export function collectContextBreakdown(
 		toolDefinitionPreview.push(`## Definition: ${tool.name}\n\n${previewValue(definition)}`);
 	}
 
-	for (const entry of ctx.sessionManager.buildContextEntries()) {
+	for (const entry of contextEntries(ctx.sessionManager)) {
 		if (entry.type === "message") {
 			const message = entry.message;
 			if (message.role === "assistant") {
@@ -436,7 +474,11 @@ export function collectContextBreakdown(
 		] satisfies ContextPart[],
 		previews: {
 			systemPrompt: systemPrompt || "No system prompt.",
-			memoryFiles: memoryPreview.join("\n\n") || "No memory files in context.",
+			memoryFiles:
+				memoryPreview.join("\n\n") ||
+				(typeof ctx.getSystemPromptOptions === "function"
+					? "No memory files in context."
+					: "This host does not expose memory files separately. Their content is counted in System prompt."),
 			skills: skillsText || "No skills in context.",
 			tools: toolDefinitionPreview.join("\n\n") || "No active tool definitions.",
 			toolResults: toolResultPreview.join("\n\n") || "No tool results in the current context.",
@@ -452,7 +494,7 @@ export default function contextUsageExtension(pi: ExtensionAPI) {
 			const usage = ctx.getContextUsage();
 			const contextWindow = usage?.contextWindow ?? ctx.model?.contextWindow ?? 0;
 			const tools = pi.getAllTools();
-			const breakdown = collectContextBreakdown(ctx, tools);
+			const breakdown = collectContextBreakdown(ctx, tools, pi.getActiveTools?.());
 			const estimated = breakdown.parts.reduce((sum, part) => sum + part.tokens, 0);
 			// System / Memory / Skills / Tools definition 为固定项，capParts 时保持原值不压缩。
 			const fixedTokens = breakdown.parts.slice(0, 4).reduce((sum, part) => sum + part.tokens, 0);
@@ -467,7 +509,7 @@ export default function contextUsageExtension(pi: ExtensionAPI) {
 				{ label: "Free space", tokens: free, color: "dim" as const },
 			];
 
-			if (ctx.mode !== "tui") {
+			if (ctx.mode !== "tui" && !(ctx.mode === undefined && ctx.hasUI)) {
 				const lines = allParts.map((part) => `${part.label}: ${formatTokens(part.tokens)} tokens`);
 				ctx.ui.notify(lines.join("\n"), "info");
 				return;

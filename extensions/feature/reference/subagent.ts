@@ -1,7 +1,6 @@
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import { homedir } from "node:os";
-import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import { getAgentDir, type ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import {
 	type AutocompleteItem,
 	type AutocompleteProvider,
@@ -22,11 +21,6 @@ const MAX_SUGGESTIONS = 2;
 // Match `@name` but NOT `@session:` (reserved by session-reference extension).
 const AGENT_NAME_PATTERN = /(?:^|[\t ])@((?:[^\s:@][^\s:]*)?)$/;
 
-function getAgentDir(): string {
-	const override = process.env.PI_CODING_AGENT_DIR;
-	return join(override ? override : homedir(), ".pi", "agent", "agents");
-}
-
 function parseFrontmatter(content: string): Record<string, string> {
 	const match = content.match(/^---\r?\n([\s\S]*?)\r?\n---/);
 	if (!match) return {};
@@ -39,7 +33,7 @@ function parseFrontmatter(content: string): Record<string, string> {
 }
 
 function loadAgents(): AgentInfo[] {
-	const dir = getAgentDir();
+	const dir = join(getAgentDir(), "agents");
 	if (!existsSync(dir)) return [];
 
 	return readdirSync(dir)
@@ -150,7 +144,8 @@ export default function agentAutocompleteExtension(pi: ExtensionAPI): void {
 	pi.on("session_start", (_event, ctx) => {
 		const generation = ++sessionGeneration;
 		const agents = getAgents();
-		if (agents.length === 0 || ctx.mode !== "tui") return;
+		if (agents.length === 0 || (ctx.mode !== "tui" && !(ctx.mode === undefined && ctx.hasUI)))
+			return;
 
 		// Register after other session_start handlers have installed their wrappers.
 		// pi-fff handles every @ prefix and otherwise shadows providers loaded before it.
@@ -185,13 +180,20 @@ export default function agentAutocompleteExtension(pi: ExtensionAPI): void {
 		const agentMap = new Map(agents.map((a) => [a.name, a]));
 		const agentList = mentions.map((n) => `"${n}" (${agentMap.get(n)!.displayName})`).join(", ");
 
-		return {
-			systemPrompt:
-				event.systemPrompt +
-				`\n\nThe user's prompt references these subagent types: ${agentList}. ` +
-				`You MUST use the Agent tool for EACH mentioned subagent to delegate the relevant parts of the request. ` +
-				`Handle different subagents separately — do NOT merge their tasks into a single Agent call. ` +
-				`For example, if the user mentions @coder and @explore, make two separate Agent tool calls, one with subagent_type="coder" and another with subagent_type="explore".`,
-		};
+		const taskTool = pi.getActiveTools?.().includes("task");
+		const instruction =
+			`The user's prompt references these subagent types: ${agentList}. ` +
+			(taskTool
+				? "Use the task tool to delegate the relevant request to EACH mentioned agent. Select each agent using the task tool's agent field."
+				: "Use the Agent tool for EACH mentioned subagent to delegate the relevant parts of the request. Select each agent using subagent_type.");
+		return { systemPrompt: appendSubagentPrompt(event.systemPrompt, instruction) as string };
 	});
+}
+
+/** Preserve OMP's ordered prompt blocks and Pi's string prompt contract. */
+export function appendSubagentPrompt(
+	prompt: string | string[],
+	instruction: string,
+): string | string[] {
+	return Array.isArray(prompt) ? [...prompt, instruction] : `${prompt}\n\n${instruction}`;
 }

@@ -192,21 +192,27 @@ function normalizeMultilineLinks(markdown: string): string {
 export default function (pi: ExtensionAPI): void {
 	// 注意：pi 每个扩展只有一个 markdownTransformer 槽位，多次注册会互相覆盖，
 	// 所以三个转换合并为一次注册，内部按序链式执行。
-	pi.registerMarkdownTransformer((markdown, context) => {
-		const { messageType, isStreaming = false } = context ?? {};
-		// thinking 保持原文；普通回复即使流式中也先关闭跨行链接的空白点击区。
-		if (messageType === "assistant-thinking") return markdown;
-		markdown = normalizeMultilineLinks(markdown);
-		if (isStreaming) return markdown;
-		// 0. 圈数字转半角括号（Nerd Font 补丁字形缺陷规避）
-		markdown = deCircled(markdown);
-		// 1. Mermaid 方言渲染
-		markdown = renderDiagrams(markdown, context);
-		// 2. GitHub 风格提示框
-		markdown = renderAdmonitions(markdown);
-		// 3. 裸 URL 转超链接
-		return linkifyUrls(markdown);
-	});
+	// OMP applies the same transform to the assistant's display copy in omp.ts.
+	pi.registerMarkdownTransformer?.(enhanceMarkdown);
+}
+
+export function enhanceMarkdown(
+	markdown: string,
+	context?: { messageType?: string; isStreaming?: boolean; availableWidth?: number },
+): string {
+	const { messageType, isStreaming = false } = context ?? {};
+	// thinking 保持原文；普通回复即使流式中也先关闭跨行链接的空白点击区。
+	if (messageType === "assistant-thinking") return markdown;
+	markdown = normalizeMultilineLinks(markdown);
+	if (isStreaming) return markdown;
+	// 0. 圈数字转半角括号（Nerd Font 补丁字形缺陷规避）
+	markdown = deCircled(markdown);
+	// 1. Mermaid 方言渲染
+	markdown = renderDiagrams(markdown, context);
+	// 2. GitHub 风格提示框
+	markdown = renderAdmonitions(markdown);
+	// 3. 裸 URL 转超链接
+	return linkifyUrls(markdown);
 }
 
 // grok-mermaid 渲染结果缓存：resize/restored 重绘会重复转换，按源码缓存 art。

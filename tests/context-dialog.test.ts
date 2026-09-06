@@ -11,9 +11,52 @@ import {
 	hasActiveTextPreview,
 	resolveUsedTokens,
 	showTextPreview,
+	skillsPreview,
 } from "../extensions/feature/context.ts";
 
 initTheme("dark");
+
+test("OMP context uses prompt blocks, resolved messages, and the active tool inventory", () => {
+	const skillBlock = "<skills>\n- review: Review changes\n</skills>";
+	const ctx = {
+		getSystemPrompt: () => ["base instructions", skillBlock],
+		sessionManager: {
+			buildSessionContext: () => ({
+				messages: [
+					{ role: "user", content: "current conversation", timestamp: 0 },
+					{
+						role: "toolResult",
+						toolName: "grep",
+						content: [{ type: "text", text: "found" }],
+						timestamp: 0,
+					},
+				],
+			}),
+		},
+	} as any;
+	const tools = [
+		{ name: "read", description: "Read", parameters: {} },
+		{ name: "grep", description: "Search", parameters: {} },
+	] as any;
+	const result = collectContextBreakdown(ctx, tools, ["grep"]);
+	assert.equal(result.previews.systemPrompt, `base instructions\n\n${skillBlock}`);
+	assert.equal(result.previews.skills, skillBlock);
+	assert.match(result.previews.memoryFiles, /counted in System prompt/);
+	assert.match(result.previews.tools, /Definition: grep/);
+	assert.doesNotMatch(result.previews.tools, /Definition: read/);
+	assert.match(result.previews.contextFiles, /current conversation/);
+	assert.match(result.previews.toolResults, /found/);
+	assert.equal(
+		result.parts.find((part) => part.label === "Skills")?.tokens,
+		Math.ceil(skillBlock.length / 4),
+	);
+});
+
+test("skill preview handles OMP custom prompt templates without Pi's formatter", () => {
+	const skills = '<skills>\n<skill name="review">\nReview changes\n</skill>\n</skills>';
+	assert.equal(skillsPreview(`before\n${skills}\nafter`, [], null), skills);
+	assert.equal(skillsPreview("no injected skills", [], null), "");
+});
 
 test("context breakdown separates tools, results, and conversation without inflating estimates", () => {
 	const ctx = {

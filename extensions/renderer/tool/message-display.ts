@@ -1,7 +1,7 @@
+import * as codingAgent from "@earendil-works/pi-coding-agent";
 import {
 	BranchSummaryMessageComponent,
 	CompactionSummaryMessageComponent,
-	SkillInvocationMessageComponent,
 } from "@earendil-works/pi-coding-agent";
 import { Markdown, Spacer, Text } from "@earendil-works/pi-tui";
 import { MESSAGE_DISPLAY_PATCH, patchRegistry } from "../../utils/patch-keys.ts";
@@ -113,7 +113,8 @@ export function installMessageDisplayRendering(): () => void {
 		dispose: () => {},
 	};
 	const installOne = (ComponentClass: any, kind: DisplayKind): void => {
-		const prototype = ComponentClass.prototype;
+		const prototype = ComponentClass?.prototype;
+		if (typeof prototype?.updateDisplay !== "function") return;
 		const original = prototype.updateDisplay;
 		const installed = function (this: any) {
 			if (patch.active && config.mode !== "off") {
@@ -134,7 +135,7 @@ export function installMessageDisplayRendering(): () => void {
 		prototype.updateDisplay = installed;
 		patch.entries.push({ prototype, installed, original });
 	};
-	installOne(SkillInvocationMessageComponent, SKILL_KIND);
+	installOne((codingAgent as any).SkillInvocationMessageComponent, SKILL_KIND);
 	installOne(CompactionSummaryMessageComponent, COMPACTION_KIND);
 	installOne(BranchSummaryMessageComponent, BRANCH_KIND);
 	patch.dispose = () => {

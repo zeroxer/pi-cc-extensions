@@ -16,6 +16,81 @@ function stripAnsi(text: string): string {
 	return text.replace(/\x1b\[[0-?]*[ -/]*[@-~]/g, "");
 }
 
+test("OMP summary falls back to a widget without adding a model message", async () => {
+	initTheme("dark");
+	const events = new Map<string, Function>();
+	const appended: { type: string; data: any }[] = [];
+	const widgets: unknown[] = [];
+	const pi = {
+		on: (event: string, handler: Function) => events.set(event, handler),
+		appendEntry: (type: string, data: unknown) => appended.push({ type, data }),
+	} as any;
+	const ctx = {
+		hasUI: true,
+		ui: { setWidget: (_name: string, widget: unknown) => widgets.push(widget) },
+		sessionManager: {
+			getBranch: () =>
+				appended.map(({ type, data }) => ({ type: "custom", customType: type, data })),
+		},
+	};
+	agentSummaryFeature(pi);
+	await events.get("agent_start")!();
+	for (const path of ["a.ts", "b.ts"]) {
+		await events.get("tool_execution_start")!({ toolName: "read", args: { path } });
+		await events.get("tool_execution_end")!({ isError: false });
+	}
+	await events.get("agent_end")!({}, ctx);
+	assert.equal(appended.length, 1);
+	assert.equal(typeof widgets.at(-1), "function");
+	const factory = widgets.at(-1) as Function;
+	const component = factory({}, { getFgAnsi: () => "" });
+	assert.match(stripAnsi(component.render(100).join("\n")), /Read 2 files/);
+	await events.get("session_start")!({}, ctx);
+	assert.equal(typeof widgets.at(-1), "function");
+	await events.get("session_shutdown")!({}, ctx);
+	assert.equal(widgets.at(-1), undefined);
+});
+
+test("OMP summary clears or restores across session and tree changes and resets pending counts", async () => {
+	const handlers = new Map<string, Function[]>();
+	const appended: unknown[] = [];
+	const widgets: unknown[] = [];
+	let branch: unknown[] = [];
+	const ctx = {
+		hasUI: true,
+		ui: { setWidget: (_name: string, value: unknown) => widgets.push(value) },
+		sessionManager: { getBranch: () => branch },
+	};
+	const emit = async (event: string, payload: unknown = {}) => {
+		for (const handler of handlers.get(event) ?? []) await handler(payload, ctx);
+	};
+	agentSummaryFeature({
+		on(event: string, handler: Function) {
+			handlers.set(event, [...(handlers.get(event) ?? []), handler]);
+		},
+		appendEntry: (_name: string, data: unknown) => appended.push(data),
+	} as any);
+	await emit("agent_start");
+	await emit("tool_execution_start", { toolName: "read", args: { path: "a" } });
+	await emit("tool_execution_start", { toolName: "read", args: { path: "b" } });
+	await emit("session_switch");
+	assert.equal(widgets.at(-1), undefined);
+	await emit("agent_end");
+	assert.equal(appended.length, 0);
+	branch = [
+		{
+			type: "custom",
+			customType: AGENT_SUMMARY_ENTRY_TYPE,
+			data: { commands: 1, reads: 1, edits: 0, writes: 0, others: 0, failed: 0, durationMs: 100 },
+		},
+	];
+	await emit("session_tree");
+	assert.equal(typeof widgets.at(-1), "function");
+	branch = [];
+	await emit("session_tree");
+	assert.equal(widgets.at(-1), undefined);
+});
+
 test("classifyTool：bash/read/edit/write/other", () => {
 	assert.equal(classifyTool("bash"), "bash");
 	assert.equal(classifyTool("powershell"), "bash");
