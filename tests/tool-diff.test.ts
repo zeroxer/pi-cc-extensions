@@ -483,7 +483,7 @@ test("write collapsed preview uses writeDiffCollapsedLines independently of edit
 			writeDiffCollapsedLines: 0,
 		},
 	);
-	const editText = output(edit).join("\n");
+	const editText = stripVTControlCharacters(output(edit).join("\n"));
 	assert.match(editText, /value 1/);
 	assert.match(editText, /more/);
 	assert.doesNotMatch(editText, /\+40 -0/, "edit must not use write stats-only collapse");
