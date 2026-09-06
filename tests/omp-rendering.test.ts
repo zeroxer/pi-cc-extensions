@@ -155,3 +155,35 @@ test("OMP thinking durations follow session switches and ignore headless session
 	emit("message_update", event);
 	assert.equal(controller.isMessageThinkingActive?.(3), false);
 });
+
+test("OMP native render failure before theme init is swallowed, not surfaced as an extension error", () => {
+	// OMP's native updateContent/render dereference the global theme singleton via
+	// getMarkdownTheme(); during early session_start / resume the theme can still be
+	// undefined, and the native rebuild then throws "theme.getColorMode of undefined".
+	// Our prototype patches must not let that bubble out as an extension error banner.
+	const proto = AssistantMessageComponent.prototype as any;
+	const realRender = proto.render;
+	proto.render = function () {
+		throw new TypeError("undefined is not an object (evaluating 'theme.getColorMode')");
+	};
+	const instance = Object.create(proto);
+	try {
+		// Theme not ready (getTheme() -> undefined): swallow and render nothing this frame.
+		// OMP re-invalidates once the theme initializes, so the adaptation self-heals.
+		const notReady = patchOmpComponents(new Map(), () => undefined);
+		try {
+			assert.deepEqual(instance.render(80), []);
+		} finally {
+			notReady.dispose();
+		}
+		// Theme ready: a native failure is a real bug and must propagate, never be hidden.
+		const ready = patchOmpComponents(new Map(), () => ({ fg: (_c: string, t: string) => t }));
+		try {
+			assert.throws(() => instance.render(80), /getColorMode/);
+		} finally {
+			ready.dispose();
+		}
+	} finally {
+		proto.render = realRender;
+	}
+});

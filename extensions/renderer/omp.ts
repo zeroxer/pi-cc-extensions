@@ -134,7 +134,20 @@ export function patchOmpComponents(
 						}),
 					};
 				} else state.forwarded = message;
-				return original.call(this, state.forwarded, options);
+				// OMP native updateContent rebuilds Markdown through getMarkdownTheme(), which
+				// reads the global `theme` singleton. Before OMP initializes the theme (early
+				// session_start / resume, ctx.ui.theme === undefined) that rebuild throws
+				// `undefined is not an object (evaluating 'theme.getColorMode')`; bubbling through
+				// this patch, OMP surfaces it as an extension error banner. Swallow it only while
+				// the theme is not ready — updateContent stored #lastMessage above, so OMP's
+				// theme-init invalidate re-runs it and the display adaptation self-heals. A
+				// failure with the theme ready is a real bug, so rethrow it.
+				try {
+					return original.call(this, state.forwarded, options);
+				} catch (error) {
+					if (getTheme()) throw error;
+					return undefined;
+				}
 			},
 	);
 	patch(
@@ -152,7 +165,14 @@ export function patchOmpComponents(
 		"render",
 		(original) =>
 			function (this: any, width: number) {
-				const native = original.call(this, width);
+				// Native render can hit the same uninitialized-theme throw as updateContent above.
+				let native: any;
+				try {
+					native = original.call(this, width);
+				} catch (error) {
+					if (getTheme()) throw error;
+					return [];
+				}
 				const state = assistants.get(this);
 				if (
 					!active ||
@@ -283,7 +303,14 @@ export function patchOmpComponents(
 		"render",
 		(original) =>
 			function (this: any, width: number) {
-				const native = original.call(this, width);
+				// Native render can hit the same uninitialized-theme throw as updateContent above.
+				let native: any;
+				try {
+					native = original.call(this, width);
+				} catch (error) {
+					if (getTheme()) throw error;
+					return [];
+				}
 				const state = bind(this, toolIds.get(this));
 				if (native.length === 0) return native;
 				// Keep native diff, interactive task cards, images, and explicit exclusions.
