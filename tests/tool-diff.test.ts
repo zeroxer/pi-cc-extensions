@@ -3,6 +3,7 @@ import test from "node:test";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { stripVTControlCharacters } from "node:util";
 import { visibleWidth } from "@earendil-works/pi-tui";
 
 import { ToolExecutionComponent, initTheme } from "@earendil-works/pi-coding-agent";
@@ -459,7 +460,7 @@ test("write collapsed preview uses writeDiffCollapsedLines independently of edit
 			writeDiffCollapsedLines: 4,
 		},
 	);
-	const writeText = output(write).join("\n");
+	const writeText = stripVTControlCharacters(output(write).join("\n"));
 	assert.match(writeText, /created/);
 	assert.match(writeText, /more/);
 	assert.match(writeText, /const value0 = 0/);
@@ -522,7 +523,7 @@ test("writeDiffCollapsedLines 0 shows stats only until expanded", () => {
 		store,
 		() => display,
 	);
-	const expandedText = output(expanded).join("\n");
+	const expandedText = stripVTControlCharacters(output(expanded).join("\n"));
 	assert.match(expandedText, /const value0 = 0/);
 	assert.match(expandedText, /const value1 = 1/);
 });
